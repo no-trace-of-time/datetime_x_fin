@@ -18,6 +18,8 @@
   , yesterday/0
   , today/1
   , yesterday/1
+  , tomorrow/0
+  , tomorrow/1
   , prefix_yyyy_2_dtime/1
   , prefix_yyyy_2_dtime/2
   , prefix_yyyy_2_settle_date/1
@@ -25,6 +27,10 @@
   , nextday/1                     %%返回下一天
   , inc_days/2                    %%返回指定天数之后的日期
   , dec_days/2                    %%返回指定天数之前的日期
+  ,is_later_than/2                %%比较日期的前后
+  ,is_earlier_than/2              %%比较日期的前后
+  ,convert/2                      %%类型转换
+  ,new/1                          %%从现有类型生成内部类型
 ]).
 
 -export([
@@ -44,16 +50,28 @@
 -type byte8() :: <<_:64>>.
 -type byte12() :: <<_:96>>.
 -type byte14() :: <<_:112>>.
+-type hour() :: 0..24.
+-type minute() :: 1..60.
+-type second() :: 1..60.
 
--type date_yyyymmdd() :: byte8().
+-type date_yyyymmdd() :: {date_yyyymmdd,byte8()}.
 -type date_yymmdd() :: byte6().
--type date_mmdd() :: byte4().
--type time_hhmmss() :: byte6().
+-type date_mmdd() :: {date_mmdd,byte4()}.
+-type date_internal() :: {date_internal,{integer(),integer(),integer()}}.
+-type time_hhmmss() :: {time_hhmmss,byte6()}.
 -type datetime_yyyymmddhhmmss() :: byte14().
 -type datetime_yymmddhhmmss() :: byte12().
+-type time_internal() :: {time_internal,{hour(),minute(),second()}}.
 
+-type date() :: date_yyyymmdd() | date_mmdd() | date_internal() .
+-type time() :: time_hhmmss() | time_internal().
+-type date_type() :: date_yyyymmdd | date_mmdd | date_internal .
 -type datetime_type() :: date_yyyymmdd() | date_yymmdd() | time_hhmmss() | datetime_yyyymmddhhmmss() | datetime_yymmddhhmmss().
 -type time_in_secs() :: integer().
+-type datetime() :: {datetime,date(),time()}.
+
+
+
 
 %%====================================================================
 %% API functions
@@ -86,6 +104,7 @@ now_test() ->
 -spec today() -> Date when
   Date :: types:date_format_yyyymmdd().
 
+%今天
 today() ->
   datetime_x:localtime_to_yyyymmdd(datetime_x:localtime()).
 
@@ -93,9 +112,14 @@ today() ->
   Fmt :: types:today_format(),
   Date :: types:date_format_yyyymmdd().
 
-today(mmdd) ->
+today(date_mmdd) ->
   YYYYMMDD = today(),
-  binary:part(YYYYMMDD, 4, 4).
+  {date_mmdd,binary:part(YYYYMMDD, 4, 4)};
+today(date_yyyymmdd) ->
+  {date_yyyymmdd,today()};
+today(date_internal) ->
+  {date_internal,datetime_x:yyyymmdd_to_tuple(today())}.
+
 %%--------------------------------------------------------
 -spec yesterday() -> Date when
   Date :: types:date_format_yyyymmdd().
@@ -108,10 +132,30 @@ yesterday() ->
 -spec yesterday(Fmt) -> Date when
   Fmt :: types:today_format(),
   Date :: types:date_format_yyyymmdd().
-
-yesterday(mmdd) ->
+yesterday(date_mmdd) ->
   YYYYMMDD = yesterday(),
-  binary:part(YYYYMMDD, 4, 4).
+  {date_mmdd,binary:part(YYYYMMDD, 4, 4)};
+yesterday(date_yyyymmdd) ->
+  {date_yyyymmdd,yesterday()};
+yesterday(date_internal) ->
+  {date_internal,datetime_x:yyyymmdd_to_tuple(yesterday())}.
+
+%%--------------------------------------------------------
+tomorrow() ->
+  Seconds = datetime_x:localtime_to_seconds(datetime_x:localtime()),
+  TomorrowTime = calendar:gregorian_seconds_to_datetime(Seconds + 86400),
+  datetime_x:localtime_to_yyyymmdd(TomorrowTime).
+
+-spec tomorrow(Fmt) -> Date when
+  Fmt :: types:today_format(),
+  Date :: types:date_format_yyyymmdd().
+tomorrow(date_mmdd) ->
+  YYYYMMDD = tomorrow(),
+  {date_mmdd,binary:part(YYYYMMDD, 4, 4)};
+tomorrow(date_yyyymmdd) ->
+  {date_yyyymmdd,tomorrow()};
+tomorrow(date_internal) ->
+  {date_internal,datetime_x:yyyymmdd_to_tuple(tomorrow())}.
 
 %%--------------------------------------------------------
 prefix_yyyy_2_dtime(DTime) when is_binary(DTime) ->
@@ -341,31 +385,39 @@ calc_diff_in_secs_test() ->
 
 
 -spec nextday(Date) -> NextDate when
-  Date :: types:date_yyyymmdd()|types:date_mmdd(),
-  NextDate :: types:byte8().
+  Date :: date(),
+  NextDate :: date().
 
 %%返回下一天
-nextday(Date) when byte_size(Date) =:= 8 ->
+nextday({date_yyyymmdd,Date}) when byte_size(Date) =:= 8 ->
   Days = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date)),
-  datetime_x:tuple_to_yyyymmdd(calendar:gregorian_days_to_date(Days+1));
-nextday(<<Month:2/bytes, Day:2/bytes>>) ->
+  {date_yyyymmdd,datetime_x:tuple_to_yyyymmdd(calendar:gregorian_days_to_date(Days+1))};
+nextday({date_mmdd,<<Month:2/bytes, Day:2/bytes>>}) ->
   <<Year:4/bytes, _Rest/binary>> = today(),
   Days = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
-  {YYYY,MM,DD}=calendar:gregorian_days_to_date(Days+1),
-  list_to_binary(io_lib:format("~4..0w~2..0w~2..0w", [YYYY, MM, DD]))
-.
+  {_,MM,DD}=calendar:gregorian_days_to_date(Days+1),
+  {date_mmdd,list_to_binary(io_lib:format("~2..0w~2..0w", [MM, DD]))};
+nextday({date_internal,Date})->
+  Days = calendar:date_to_gregorian_days(Date),
+  {date_internal,calendar:gregorian_days_to_date(Days+1)}.
+
 %%nextday函数测试
 nextday_test()->
-  ?assertEqual(<<"20170101">>,nextday(<<"20161231">>)), %% 年末 月末
-  ?assertEqual(<<"20180101">>,nextday(<<"1231">>)), %% 年末 月末
+  ?assertEqual({date_yyyymmdd,<<"20170101">>},nextday({date_yyyymmdd,<<"20161231">>})), %% 年末 月末
+  ?assertEqual({date_mmdd,<<"0101">>},nextday({date_mmdd,<<"1231">>})), %% 年末 月末
+  ?assertEqual({date_internal,{2017,1,1}},nextday({date_internal,{2016,12,31}})), %% 年末 月末
 
-  ?assertEqual(<<"20170102">>,nextday(<<"20170101">>)), %% 元旦 月初
-  ?assertEqual(<<"20170102">>,nextday(<<"0101">>)), %% 元旦 月初
+  ?assertEqual({date_yyyymmdd,<<"20170102">>},nextday({date_yyyymmdd,<<"20170101">>})), %% 元旦 月初
+  ?assertEqual({date_mmdd,<<"0102">>},nextday({date_mmdd,<<"0101">>})), %% 元旦 月初
+  ?assertEqual({date_internal,{2017,01,02}},nextday({date_internal,{2017,01,01}})), %% 元旦 月初
 
-  ?assertEqual(<<"20170301">>,nextday(<<"20170228">>)),  %% 闰月 月末
-  ?assertEqual(<<"20170301">>,nextday(<<"0228">>)),  %% 闰月 月末
-  ok
-  .
+  ?assertEqual({date_yyyymmdd,<<"20170301">>},nextday({date_yyyymmdd,<<"20170228">>})), %% 闰月 月末
+  ?assertEqual({date_mmdd,<<"0301">>},nextday({date_mmdd,<<"0228">>})), %% 闰月 月末
+  ?assertEqual({date_internal,{2017,03,01}},nextday({date_internal,{2017,02,28}})), %% 闰月 月末
+
+  ?assertError(if_clause,nextday({date_yyyymmdd,<<"20170229">>})), %% 闰月 29日
+  ?assertError(if_clause,nextday({date_internal,{2017,02,29}})), %% 闰月 29日
+  ok.
 
 
 %%返回指定天数之后的日期
@@ -374,17 +426,36 @@ nextday_test()->
   Days :: integer(),
   Date :: types:date_yyyymmdd().
 
-inc_days(Date , Days) when byte_size(Date) =:= 8  ->
+inc_days({date_yyyymmdd,Date} , Days) when byte_size(Date) =:= 8  ->
   Day = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date)),
-  datetime_x:tuple_to_yyyymmdd(calendar:gregorian_days_to_date(Day+Days)).
+  {date_yyyymmdd,datetime_x:tuple_to_yyyymmdd(calendar:gregorian_days_to_date(Day+Days))};
+inc_days({date_mmdd,<<Month:2/bytes, Day:2/bytes>>} , Days) ->
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  ToDays = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  {_,MM,DD}=calendar:gregorian_days_to_date(Days+ToDays),
+  {date_mmdd,list_to_binary(io_lib:format("~2..0w~2..0w", [MM, DD]))};
+inc_days({date_internal,Date} , Days)   ->
+  ToDays = calendar:date_to_gregorian_days(Date),
+  {date_internal,calendar:gregorian_days_to_date(Days+ToDays)}.
 
 %%inc_day函数测试
 inc_days_test()->
-  ?assertEqual(<<"20170131">>,inc_days(<<"20161231">>,31)), %% 年末 月末
-  ?assertEqual(<<"20170106">>,inc_days(<<"20170101">>,5)), %% 元旦 月初
-  ?assertEqual(<<"20170310">>,inc_days(<<"20170228">>,10)),  %% 闰月 月末
-  ok
-.
+  ?assertEqual({date_yyyymmdd,<<"20170103">>},inc_days({date_yyyymmdd,<<"20161231">>},3)), %% 闰月 月末
+  ?assertEqual({date_mmdd,<<"0103">>},inc_days({date_mmdd,<<"1231">>},3)), %% 闰月 月末
+  ?assertEqual({date_internal,{2017,01,03}},inc_days({date_internal,{2016,12,31}},3)), %% 闰月 月末
+
+  ?assertEqual({date_yyyymmdd,<<"20170106">>},inc_days({date_yyyymmdd,<<"20170101">>},5)), %% 元旦 月初
+  ?assertEqual({date_mmdd,<<"0106">>},inc_days({date_mmdd,<<"0101">>},5)), %% 元旦 月初
+  ?assertEqual({date_internal,{2017,01,06}},inc_days({date_internal,{2017,01,01}},5)), %% 元旦 月初
+
+  ?assertEqual({date_yyyymmdd,<<"20170310">>},inc_days({date_yyyymmdd,<<"20170228">>},10)), %% 闰月 月末
+  ?assertEqual({date_mmdd,<<"0310">>},inc_days({date_mmdd,<<"0228">>},10)), %% 闰月 月末
+  ?assertEqual({date_internal,{2017,03,10}},inc_days({date_internal,{2017,02,28}},10)), %% 闰月 月末
+
+  ?assertError(if_clause,inc_days({date_yyyymmdd,<<"20170229">>},10)),  %% 闰月 29日
+  ?assertError(if_clause,inc_days({date_mmdd,<<"0229">>},10)),  %% 闰月 29日
+  ?assertError(if_clause,inc_days({date_internal,{2017,02,29}},10)),  %% 闰月 29日
+  ok.
 
 
 %%返回指定天数之前的日期
@@ -393,14 +464,196 @@ inc_days_test()->
   Days :: integer(),
   Date :: types:date_yyyymmdd().
 
-dec_days(Date , Days) when byte_size(Date) =:= 8 ->
-  Day = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date)),
-  datetime_x:tuple_to_yyyymmdd(calendar:gregorian_days_to_date(Day-Days)).
+dec_days({date_yyyymmdd,Date} , Days) when byte_size(Date) =:= 8 ->
+  ToDays = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date)),
+  {date_yyyymmdd,datetime_x:tuple_to_yyyymmdd(calendar:gregorian_days_to_date(ToDays-Days))};
+dec_days({date_mmdd,<<Month:2/bytes, Day:2/bytes>>} , Days) ->
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  ToDays = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  {_,MM,DD}=calendar:gregorian_days_to_date(ToDays-Days),
+  {date_mmdd,list_to_binary(io_lib:format("~2..0w~2..0w", [MM, DD]))};
+dec_days({date_internal,Date} , Days)   ->
+  ToDays = calendar:date_to_gregorian_days(Date),
+  {date_internal,calendar:gregorian_days_to_date(ToDays-Days)}.
 
 %%dec_days函数测试
 dec_days_test()->
-  ?assertEqual(<<"20161130">>,dec_days(<<"20161231">>,31)), %% 年末 月末
-  ?assertEqual(<<"20161227">>,dec_days(<<"20170101">>,5)), %% 元旦 月初
-  ?assertEqual(<<"20170218">>,dec_days(<<"20170228">>,10)),  %% 闰月 月末
-  ok
-.
+  ?assertEqual({date_yyyymmdd,<<"20161130">>},dec_days({date_yyyymmdd,<<"20161231">>},31)), %% 闰月 月末
+  ?assertEqual({date_mmdd,<<"1130">>},dec_days({date_mmdd,<<"1231">>},31)), %% 闰月 月末
+  ?assertEqual({date_internal,{2016,11,30}},dec_days({date_internal,{2016,12,31}},31)), %% 闰月 月末
+
+  ?assertEqual({date_yyyymmdd,<<"20161227">>},dec_days({date_yyyymmdd,<<"20170101">>},5)), %% 元旦 月初
+  ?assertEqual({date_mmdd,<<"1227">>},dec_days({date_mmdd,<<"0101">>},5)), %% 元旦 月初
+  ?assertEqual({date_internal,{2016,12,27}},dec_days({date_internal,{2017,01,01}},5)), %% 元旦 月初
+
+  ?assertEqual({date_yyyymmdd,<<"20170218">>},dec_days({date_yyyymmdd,<<"20170228">>},10)), %% 闰月 月末
+  ?assertEqual({date_mmdd,<<"0218">>},dec_days({date_mmdd,<<"0228">>},10)), %% 闰月 月末
+  ?assertEqual({date_internal,{2017,02,18}},dec_days({date_internal,{2017,02,28}},10)), %% 闰月 月末
+
+  ?assertError(if_clause,inc_days({date_yyyymmdd,<<"20170229">>},10)),  %% 闰月 29日
+  ?assertError(if_clause,inc_days({date_mmdd,<<"0229">>},10)),  %% 闰月 29日
+  ?assertError(if_clause,inc_days({date_internal,{2017,02,29}},10)),  %% 闰月 29日
+  ok.
+
+%%比较两天的大小
+-spec is_later_than(Date1,Date2)-> boolean() when
+  Date1 :: date(),
+  Date2 :: date().
+
+is_later_than({date_yyyymmdd,Date1}, {date_yyyymmdd,Date2}) ->
+  Days1 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date1)),
+  Days2 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date2)),
+  Days1>Days2;
+is_later_than({date_yyyymmdd,Date1}, {date_mmdd,<<Month:2/bytes, Day:2/bytes>>}) ->
+  Days1 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date1)),
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  Days2 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  Days1>Days2;
+is_later_than({date_yyyymmdd,Date1}, {date_internal,Date2}) ->
+  Days1 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date1)),
+  Days2 = calendar:date_to_gregorian_days(Date2),
+  Days1>Days2;
+is_later_than({date_mmdd,<<Month:2/bytes, Day:2/bytes>>}, {date_yyyymmdd,Date2}) ->
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  Days1 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  Days2 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date2)),
+  Days1>Days2;
+is_later_than({date_mmdd,<<Month:2/bytes, Day:2/bytes>>}, {date_mmdd,<<Month2:2/bytes, Day2:2/bytes>>}) ->
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  Days1 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  Days2 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month2),binary_to_integer(Day2)}),
+  Days1>Days2;
+is_later_than({date_mmdd,<<Month:2/bytes, Day:2/bytes>>}, {date_internal,Date2}) ->
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  Days1 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  Days2 = calendar:date_to_gregorian_days(Date2),
+  Days1>Days2;
+is_later_than({date_internal,Date1}, {date_yyyymmdd,Date2}) ->
+  Days1 = calendar:date_to_gregorian_days(Date1),
+  Days2 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date2)),
+  Days1>Days2;
+is_later_than({date_internal,Date1}, {date_mmdd,<<Month:2/bytes, Day:2/bytes>>}) ->
+  Days1 = calendar:date_to_gregorian_days(Date1),
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  Days2 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  Days1>Days2;
+is_later_than({date_internal,Date1}, {date_internal,Date2}) ->
+  Days1 = calendar:date_to_gregorian_days(Date1),
+  Days2 = calendar:date_to_gregorian_days(Date2),
+  Days1>Days2.
+
+is_later_than_test()->
+  ?assertEqual(false,is_later_than({date_yyyymmdd,<<"20170202">>}, {date_yyyymmdd,<<"20170203">>})),
+  ?assertEqual(false,is_later_than({date_yyyymmdd,<<"20170202">>}, {date_mmdd,<<"0203">>})),
+  ?assertEqual(false,is_later_than({date_yyyymmdd,<<"20170202">>}, {date_internal,{2017,02,03}})),
+
+  ?assertEqual(false,is_later_than({date_mmdd,<<"0202">>}, {date_yyyymmdd,<<"20170203">>})),
+  ?assertEqual(false,is_later_than({date_mmdd,<<"0202">>}, {date_mmdd,<<"0203">>})),
+  ?assertEqual(false,is_later_than({date_mmdd,<<"0202">>}, {date_internal,{2017,02,03}})),
+
+  ?assertEqual(false,is_later_than({date_internal,{2017,02,02}}, {date_yyyymmdd,<<"20170203">>})),
+  ?assertEqual(false,is_later_than({date_internal,{2017,02,02}}, {date_mmdd,<<"0203">>})),
+  ?assertEqual(false,is_later_than({date_internal,{2017,02,02}}, {date_internal,{2017,02,03}})).
+
+-spec is_earlier_than(Date1,Date2)-> boolean() when
+  Date1 :: date(),
+  Date2 :: date().
+
+is_earlier_than({date_yyyymmdd,Date1}, {date_yyyymmdd,Date2}) ->
+  Days1 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date1)),
+  Days2 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date2)),
+  Days1<Days2;
+is_earlier_than({date_yyyymmdd,Date1}, {date_mmdd,<<Month:2/bytes, Day:2/bytes>>}) ->
+  Days1 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date1)),
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  Days2 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  Days1<Days2;
+is_earlier_than({date_yyyymmdd,Date1}, {date_internal,Date2}) ->
+  Days1 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date1)),
+  Days2 = calendar:date_to_gregorian_days(Date2),
+  Days1<Days2;
+is_earlier_than({date_mmdd,<<Month:2/bytes, Day:2/bytes>>}, {date_yyyymmdd,Date2}) ->
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  Days1 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  Days2 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date2)),
+  Days1<Days2;
+is_earlier_than({date_mmdd,<<Month:2/bytes, Day:2/bytes>>}, {date_mmdd,<<Month2:2/bytes, Day2:2/bytes>>}) ->
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  Days1 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  Days2 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month2),binary_to_integer(Day2)}),
+  Days1<Days2;
+is_earlier_than({date_mmdd,<<Month:2/bytes, Day:2/bytes>>}, {date_internal,Date2}) ->
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  Days1 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  Days2 = calendar:date_to_gregorian_days(Date2),
+  Days1<Days2;
+is_earlier_than({date_internal,Date1}, {date_yyyymmdd,Date2}) ->
+  Days1 = calendar:date_to_gregorian_days(Date1),
+  Days2 = calendar:date_to_gregorian_days(datetime_x:yyyymmdd_to_tuple(Date2)),
+  Days1<Days2;
+is_earlier_than({date_internal,Date1}, {date_mmdd,<<Month:2/bytes, Day:2/bytes>>}) ->
+  Days1 = calendar:date_to_gregorian_days(Date1),
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  Days2 = calendar:date_to_gregorian_days({binary_to_integer(Year),binary_to_integer(Month),binary_to_integer(Day)}),
+  Days1<Days2;
+is_earlier_than({date_internal,Date1}, {date_internal,Date2}) ->
+  Days1 = calendar:date_to_gregorian_days(Date1),
+  Days2 = calendar:date_to_gregorian_days(Date2),
+  Days1<Days2.
+
+is_earlier_than_test()->
+  ?assertEqual(true,is_earlier_than({date_yyyymmdd,<<"20170202">>}, {date_yyyymmdd,<<"20170203">>})),
+  ?assertEqual(true,is_earlier_than({date_yyyymmdd,<<"20170202">>}, {date_mmdd,<<"0203">>})),
+  ?assertEqual(true,is_earlier_than({date_yyyymmdd,<<"20170202">>}, {date_internal,{2017,02,03}})),
+
+  ?assertEqual(true,is_earlier_than({date_mmdd,<<"0202">>}, {date_yyyymmdd,<<"20170203">>})),
+  ?assertEqual(true,is_earlier_than({date_mmdd,<<"0202">>}, {date_mmdd,<<"0203">>})),
+  ?assertEqual(true,is_earlier_than({date_mmdd,<<"0202">>}, {date_internal,{2017,02,03}})),
+
+  ?assertEqual(true,is_earlier_than({date_internal,{2017,02,02}}, {date_yyyymmdd,<<"20170203">>})),
+  ?assertEqual(true,is_earlier_than({date_internal,{2017,02,02}}, {date_mmdd,<<"0203">>})),
+  ?assertEqual(true,is_earlier_than({date_internal,{2017,02,02}}, {date_internal,{2017,02,03}})).
+
+-spec convert(date_type(),date())-> date().
+%%内部类型转换
+convert(date_yyyymmdd, {date_mmdd,<<Month:2/bytes, Day:2/bytes>>}) ->
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  {date_yyyymmdd,<<Year:4/bytes,Month:2/bytes,Day:2/bytes>>};
+convert(date_yyyymmdd, {date_internal,Date}) ->
+  {date_yyyymmdd,datetime_x:tuple_to_yyyymmdd(Date)};
+
+convert(date_mmdd, {date_yyyymmdd,Date}) ->
+  {date_mmdd,binary:part(Date, 4, 4)};
+convert(date_mmdd, {date_internal,Date}) ->
+  {date_mmdd,binary:part(datetime_x:tuple_to_yyyymmdd(Date), 4, 4)};
+
+convert(date_internal,{date_yyyymmdd,Date}) ->
+  {date_internal,datetime_x:yyyymmdd_to_tuple(Date)};
+convert(date_internal, {date_mmdd,<<Month:2/bytes, Day:2/bytes>>}) ->
+  <<Year:4/bytes, _Rest/binary>> = today(),
+  {date_internal,datetime_x:yyyymmdd_to_tuple(<<Year:4/bytes,Month:2/bytes, Day:2/bytes>>)}.
+
+convert_test()->
+  ?assertEqual({date_yyyymmdd,<<"20170327">>},convert(date_yyyymmdd,{date_mmdd,<<"0327">>})),
+  ?assertEqual({date_yyyymmdd,<<"20161212">>},convert(date_yyyymmdd,{date_internal,{2016,12,12}})),
+
+  ?assertEqual({date_mmdd,<<"0327">>},convert(date_mmdd,{date_yyyymmdd,<<"20170327">>})),
+  ?assertEqual({date_mmdd,<<"1212">>},convert(date_mmdd,{date_internal,{2016,12,12}})),
+
+  ?assertEqual({date_internal,{2016,12,12}},convert(date_internal,{date_yyyymmdd,<<"20161212">>})),
+  ?assertEqual({date_internal,{2017,12,12}},convert(date_internal,{date_mmdd,<<"1212">>})).
+
+%%从现有类型生成内部类型
+-spec new(Date)-> date() when
+  Date :: byte4() | byte8() | {integer(),integer(),integer()}.
+new(<<Year:4/bytes, Month:2/bytes, Day:2/bytes>>) ->
+  {date_yyyymmdd,<<Year:4/bytes, Month:2/bytes, Day:2/bytes>>};
+new(<<Month:2/bytes, Day:2/bytes>>) ->
+  {date_mmdd,<<Month:2/bytes, Day:2/bytes>>};
+new({Yyyy,Mm,Dd}) ->
+  {date_internal,{Yyyy,Mm,Dd}}.
+
+new_test()->
+  ?assertEqual({date_yyyymmdd,<<"20170327">>},new(<<"20170327">>)),
+  ?assertEqual({date_mmdd,<<"0327">>},new(<<"0327">>)),
+  ?assertEqual({date_internal,{2017,12,12}},new({2017,12,12})).
