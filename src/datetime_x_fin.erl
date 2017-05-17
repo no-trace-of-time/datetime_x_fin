@@ -33,6 +33,7 @@
   , new/1                          %%从现有类型生成内部类型
   , parse_date/1
   , parse_date_2_fmt/2
+  , parse_time/1
 ]).
 
 -export([
@@ -701,4 +702,21 @@ parse_date_2_fmt_test() ->
   ?assertEqual(<<"20171115">>, parse_date_2_fmt(<<"2017-11-15">>, date_yyyymmdd)),
 
   ?assertEqual(<<"20171115">>, parse_date_2_fmt(<<"2017/11/15">>, date_yyyymmdd)),
+  ok.
+
+% hh:mm:ss
+parse_time(Time) when is_binary(Time) ->
+  [H, M, S] = binary:split(Time, [<<":">>, <<"/">>, <<"-">>], [global]),
+%%  Time1 = {binary_to_integer(H), binary_to_integer(M), binary_to_integer(S)},
+  TimeString = io_lib:format("~2..0w~2..0w~2..0w",
+    [binary_to_integer(H),
+      binary_to_integer(M),
+      binary_to_integer(S)]),
+  list_to_binary(TimeString).
+
+
+parse_time_test() ->
+  ?assertEqual(<<"050505">>, parse_time(<<"05:05:05">>)),
+  ?assertEqual(<<"050505">>, parse_time(<<"05/05/05">>)),
+  ?assertEqual(<<"050505">>, parse_time(<<"05-05-05">>)),
   ok.
