@@ -699,4 +699,6 @@ parse_date_2_fmt(Date, Format) when is_binary(Date), is_atom(Format) ->
 parse_date_2_fmt_test() ->
   ?assertEqual(<<"20170515">>, parse_date_2_fmt(<<"2017-5-15">>, date_yyyymmdd)),
   ?assertEqual(<<"20171115">>, parse_date_2_fmt(<<"2017-11-15">>, date_yyyymmdd)),
+
+  ?assertEqual(<<"20171115">>, parse_date_2_fmt(<<"2017/11/15">>, date_yyyymmdd)),
   ok.
